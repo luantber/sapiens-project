@@ -1,0 +1,306 @@
+# PIPELINE DEFINITION
+# Name: training-pipeline
+# Inputs:
+#    dataset_uri: str
+# Outputs:
+#    train-model-metrics_training: system.Metrics
+components:
+  comp-clean-dataset:
+    executorLabel: exec-clean-dataset
+    inputDefinitions:
+      parameters:
+        dataset:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        dataset_output:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-register-model:
+    executorLabel: exec-register-model
+    inputDefinitions:
+      artifacts:
+        model_input:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-split-dataset:
+    executorLabel: exec-split-dataset
+    inputDefinitions:
+      artifacts:
+        dataset_input:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        dataset_output:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-train-model:
+    executorLabel: exec-train-model
+    inputDefinitions:
+      artifacts:
+        dataset_input:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        metrics_training:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        model_output:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-clean-dataset:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - clean_dataset
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pandas>=2.2'\
+          \ && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef clean_dataset(dataset: str, dataset_output: Output[Dataset]):\n\
+          \    \"\"\"\n    Loads a CSV File and returns\n    \"\"\"\n\n    import\
+          \ pandas as pd\n\n    df = pd.read_csv(dataset)\n\n    # Drop missing values\n\
+          \    df = df.dropna()\n\n    # Rename columns to match the BigQuery schema\n\
+          \    df = df.rename(\n        {\n            \"sepal length (cm)\": \"sepal_l\"\
+          ,\n            \"sepal width (cm)\": \"sepal_w\",\n            \"petal length\
+          \ (cm)\": \"petal_l\",\n            \"petal width (cm)\": \"petal_w\",\n\
+          \        },\n        axis=\"columns\",\n    )\n\n    # Save the cleaned\
+          \ dataset\n    df.to_csv(dataset_output.path, index=False)\n\n"
+        image: python:3.9
+        resources:
+          cpuLimit: 1.0
+    exec-register-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pandas>=2.2'\
+          \ 'scikit-learn>=1.0' 'google-cloud-secret-manager' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register_model(\n    model_input: Input[Model],\n):\n    \"\"\
+          \"\n    Register the model uri into a gcp secret\n    \"\"\"\n    import\
+          \ os\n    from google.cloud import secretmanager\n\n    # Get the model\
+          \ uri\n    model_uri = model_input.uri\n\n    # Get the project id\n   \
+          \ project_id = \"sapiens-417017\"\n\n    # Create the secret manager client\n\
+          \    client = secretmanager.SecretManagerServiceClient()\n\n    # Create\
+          \ the secret name\n    secret_name = f\"projects/{project_id}/secrets/iris_model\"\
+          \n\n    # Add the secret\n    response = client.add_secret_version(\n  \
+          \      request={\"parent\": secret_name, \"payload\": {\"data\": model_uri.encode(\"\
+          utf-8\")}}\n    )\n\n    print(f\"Added model to secret 'iris_model'\")\n\
+          \n"
+        image: python:3.9
+        resources:
+          cpuLimit: 1.0
+    exec-split-dataset:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - split_dataset
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pandas>=2.2'\
+          \ && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef split_dataset(dataset_input: Input[Dataset], dataset_output:\
+          \ Output[Dataset]):\n    \"\"\"\n    Loads a CSV File and adds a column\
+          \ with the split\n    \"\"\"\n\n    import pandas as pd\n\n    df = pd.read_csv(dataset_input.path)\n\
+          \n    # Split the dataset\n    df[\"split\"] = \"train\"\n    df.loc[df.sample(frac=0.2,\
+          \ random_state=42).index, \"split\"] = \"test\"\n\n    # Save the splitted\
+          \ dataset\n    df.to_csv(dataset_output.path, index=False)\n\n"
+        image: python:3.9
+        resources:
+          cpuLimit: 1.0
+    exec-train-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pandas>=2.2'\
+          \ 'scikit-learn>=1.0' 'pandas-gbq' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model(\n    dataset_input: Input[Dataset],\n    model_output:\
+          \ Output[Model],\n    metrics_training: Output[Metrics],\n):\n    \"\"\"\
+          \n    Loads a CSV File and trains a model\n    \"\"\"\n\n    from sklearn\
+          \ import svm\n    import pandas as pd\n    import joblib\n\n    df = pd.read_csv(dataset_input.path)\n\
+          \n    train_df = df[df[\"split\"] == \"train\"]\n    test_df = df[df[\"\
+          split\"] == \"test\"]\n\n    x_train = train_df[df.columns[:-2]].values\n\
+          \    y_train = train_df[\"target\"].values\n\n    x_test = test_df[df.columns[:-2]].values\n\
+          \    y_test = test_df[\"target\"].values\n\n    # Train a SVM model\n  \
+          \  model = svm.SVC()\n    model.fit(x_train, y_train)\n\n    # Evaluate\
+          \ the model on train\n    acc_train = model.score(x_train, y_train)\n  \
+          \  print(f\"Accuracy Train: {acc_train}\")\n    metrics_training.log_metric(\"\
+          acc_train\", acc_train)\n\n    # Evaluate the model on test\n    acc_test\
+          \ = model.score(x_test, y_test)\n    print(f\"Accuracy Test: {acc_test}\"\
+          )\n    metrics_training.log_metric(\"acc_test\", acc_test)\n\n    # Save\
+          \ the model\n    joblib.dump(model, model_output.path)\n\n    # Store predictions\
+          \ on Bigquery\n    test_df[\"prediction\"] = model.predict(x_test)\n   \
+          \ test_df[\"timestamp\"] = pd.Timestamp.now()\n    # remove target and split\
+          \ columns\n    test_df = test_df.drop(columns=[\"target\", \"split\"])\n\
+          \n    test_df.to_gbq(\"sapiens-417017.predictions.training\", project_id=\"\
+          sapiens-417017\",if_exists=\"append\")\n\n"
+        image: python:3.9
+        resources:
+          cpuLimit: 1.0
+pipelineInfo:
+  name: training-pipeline
+root:
+  dag:
+    outputs:
+      artifacts:
+        train-model-metrics_training:
+          artifactSelectors:
+          - outputArtifactKey: metrics_training
+            producerSubtask: train-model
+    tasks:
+      clean-dataset:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-clean-dataset
+        inputs:
+          parameters:
+            dataset:
+              componentInputParameter: dataset_uri
+        taskInfo:
+          name: clean-dataset
+      register-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-register-model
+        dependentTasks:
+        - train-model
+        inputs:
+          artifacts:
+            model_input:
+              taskOutputArtifact:
+                outputArtifactKey: model_output
+                producerTask: train-model
+        taskInfo:
+          name: register-model
+      split-dataset:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-split-dataset
+        dependentTasks:
+        - clean-dataset
+        inputs:
+          artifacts:
+            dataset_input:
+              taskOutputArtifact:
+                outputArtifactKey: dataset_output
+                producerTask: clean-dataset
+        taskInfo:
+          name: split-dataset
+      train-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model
+        dependentTasks:
+        - split-dataset
+        inputs:
+          artifacts:
+            dataset_input:
+              taskOutputArtifact:
+                outputArtifactKey: dataset_output
+                producerTask: split-dataset
+        taskInfo:
+          name: train-model
+  inputDefinitions:
+    parameters:
+      dataset_uri:
+        parameterType: STRING
+  outputDefinitions:
+    artifacts:
+      train-model-metrics_training:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.7.0

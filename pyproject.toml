@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "sapiens-project"
+version = "0.1.0"
+description = ""
+authors = ["luantber <luantber@gmail.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.11"
+scikit-learn = "^1.4.1.post1"
+fastapi = "^0.110.0"
+pandas = "^2.2.1"
+google-cloud-secret-manager = "^2.18.3"
+pandas-gbq = "^0.22.0"
+uvicorn = {extras = ["standard"], version = "^0.28.0"}
+google-cloud-storage = "^2.15.0"
+
+[tool.poetry.group.infra.dependencies]
+pulumi = "^3.109.0"
+pulumi-gcp = "^7.13.0"
+kfp = "^2.7.0"
+google-cloud-aiplatform = "^1.43.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.2.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
